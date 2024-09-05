@@ -5,17 +5,21 @@ Before diving into the Candidate Backing Subsystem of the Polkadot Parachain Pro
 The Parachain Protocol is designed to take a parachain's block from creation to being included on the Relay Chain. This process can happen simultaneously for all parachains linked to the Relay Chain, allowing the network to be divided efficiently among parachains while still ensuring high security.
 
 ### Collators
-TODO: who can be collator? <br />
+Collators are at least light nodes on the relay chain and full nodes on their respective parachains. While they don't provide security guarantees (which are handled by Polkadot), the network relies on having at least one honest collator to accept user transactions and build blocks. usually, collators are operated by the parachain-owning DAO.
+
 Collators generate a Proof-of-Validity(PoV) that validators can verify. To create this PoV, collators need to understand the transaction format and block creation rules of a specific parachain and have access to its full state.
 
 ### Validators
-TODO: who can be Validator? <br />
 Validators are tasked with verifying proposed parachain blocks by checking their Proof-of-Validity (PoV) and ensuring the PoV is available for a set period. They have funds locked on-chain, which can be partially or fully taken by the network if they act improperly.
 
 Some validators are assigned to specific parachains by the Validator Assignment Routine and are known as para-validators. They connect with collators, who submit candidate blocks along with Proof-of-Validity (PoV) through the Collator Subsystem.
 
-Para-validators take part in the Candidate Backing Subsystem. Their role is to verify that a candidate block adheres to the parachain’s state transition rules. Since states are stored in Merkle trees, para-validators can check state transitions without needing the entire state, but they do require a specific set of information called Proof-of-Validity.
+Para-validators participate in the Candidate Backing Subsystem to ensure that candidate blocks follow the parachain's state transition rules. Since parachain states are stored in Merkle trees, para-validators can verify state transitions without having access to the entire state, but they require a specific set of information known as the Proof-of-Validity (PoV).
 
+The Proof-of-Validity includes:
+* The block, which contains the list of state transitions.
+* The values in the parachain’s database that are modified by the block.
+* The hashes of the unaffected points in the Merkle tree.
 
 # Candidate backing subsystem
 
@@ -23,15 +27,19 @@ Para-validators take part in the Candidate Backing Subsystem. Their role is to v
 * parachain block is a candidate to be added in relaychain block so we call it a candidate block. 
 
 ### What are the validity statements that parachain validators can issue?
-* Parachain validators can issue two types of statements for a candidate block:
+* Parachain validators can issue two types of validity statements for a candidate block:
     * **Seconded**: This statement means the validator has verified the candidate block and is proposing it to other parachain validators for further validation.
     * **Valid**: This statement indicates that the candidate block is valid.
 
-* A Seconded statement automatically implies that the block is Valid, so a block should not be marked as Valid unless it has already been seconded. Only parachain validators can second candidate blocks, and they are limited to seconding one candidate per depth per active leaf. Before asynchronous backing, the depth is always 0.
+* A Seconded statement automatically implies that the block is Valid, so a block should not be marked as Valid unless it has already been seconded. Only para-validators assigned for a particular parachain can second candidate blocks, and they are limited to seconding one candidate per depth per active leaf in relay-chain. Before asynchronous backing, the depth is always 0.
+
+![allowed-to-second](allowed-to-second.jpg)
 
 ### Backable Candidate vs. Backed Candidate
-* A candidate block becomes **backable** when it receives enough supporting statements from the parachain validators. Under the legacy backing system (before asynchronous support), a candidate required two supporting votes to be considered backable.
-* Once a backable candidate is recorded in a relay-chain block, it becomes a **backed candidate**.
+* A candidate block becomes **backable** when it receives enough supporting validity statements from the parachain validators. in legacy backing (before asynchronous support), a candidate required two supporting votes to be considered backable.
+* After a candidate becomes backable, the relay chain block author selects one for each parachain to be included in the relay chain block. When a backable candidate is included in the relay chain block, it becomes a **backed** candidate.
+
+* **Note:** The Candidate Backing Subsystem only produces **backable** candidates; it does not directly produce **backed** candidates.
 
 ### Overview
 
@@ -39,11 +47,11 @@ Para-validators take part in the Candidate Backing Subsystem. Their role is to v
 * Parablocks that don't gather enough validator votes confirming their correctness are rejected. If a candidate block that was initially validated is later found to be invalid, the validators who voted for it may face slashing penalties.
 
 * The Candidate Backing Subsystem is responsible for producing backable candidates for inclusion in new relay-chain blocks. It accomplishes this by:
-    * Issuing signed statements.
-    * Tracking statements received from other validators.
-    * Combining these statements into backing for specific candidates once enough support is obtained.
+    * Issuing signed validity statements.
+    * Tracking validity statements received from other validators.
+    * Combining these validity statements into backing for specific candidates once enough support is obtained.
 
-* This subsystem does not determine which candidate is ultimately included in the relay chain; that decision is left to the block author. However, once a sufficient quorum of validators agrees on a candidate’s validity, the subsystem notifies the [Provisioner](https://paritytech.github.io/polkadot-sdk/book/node/utility/provisioner.html), who then triggers the block production mechanisms to include the parablock in the relay-chain block.
+* This subsystem does not determine which candidate is ultimately included in the relay chain; that decision is left to the block author. However, once a sufficient quorum of validators agrees on a candidate’s validity, the subsystem notifies the [Provisioner](https://paritytech.github.io/polkadot-sdk/book/node/utility/provisioner.html)(utility subsystem), who then triggers the block production mechanisms to include the parablock in the relay-chain block.
 
 **NOTE:** We have used the term "candidate block" for simplicity, but in implementation, it is referred to as a [candidate-receipt](https://wiki.polkadot.network/docs/learn-parachains-protocol#candidate-receipts) 
 
@@ -66,19 +74,22 @@ type SecondMessage struct {
 ![Second-message](Second.jpg)
 
 **Functionality:**
-The Candidate Backing Subsystem requests validation from the Validation Subsystem and generates the appropriate statement based on the validation result.
+The Candidate Backing Subsystem requests validation from the Validation Subsystem and generates the appropriate validity statement based on the validation result.
 
 If the Candidate is Invalid:
 * If the candidate was recommended by the validator's own Collator Protocol Subsystem, a message is sent back to the Collator Protocol Subsystem with the candidate's hash. This allows the collator that recommended the invalid candidate to be penalized.
 
 If the Candidate is Valid:
-* The subsystem signs and dispatches a Seconded statement to peers, but only if the validator has not already seconded another candidate or signed a Valid statement for the requested candidate.
-* The issued statement is stored in the validator's statement table.
-* Signing both a Seconded and Valid statement for the same candidate is considered double-voting, which is a misbehavior with a severe penalty.
+* The subsystem signs and dispatches a `Seconded` validity statement to peers, but only if the validator has not already seconded another candidate or signed a `Valid` statement for the requested candidate.
+* The issued validity statement is stored in the validator's statement table.
+* Signing both a `Seconded` and `Valid` statement for the same candidate is considered double-voting, which is a misbehavior with a severe penalty.
 
 
 ### Statement
-The `StatementMessage` represents a validator's assessment of a specific candidate received from other parachain validators and is sent by the Statement Distribution Subsystem to the Candidate Backing Subsystem.
+The `StatementMessage` represents a validator's assessment of a specific candidate received from other parachain validators and is sent by the `Statement Distribution Subsystem` to the `Candidate Backing Subsystem`.
+
+* `Statement Distribution Subsystem` is responsible for collecting the validity statements from other para-validators and distributing the validity statements to other para-validators.
+
 
 ```
 type StatementMessage struct {
@@ -90,10 +101,10 @@ type StatementMessage struct {
 ![Second-message](Statement.jpg)
 
 **Functionality:**
-- If the statement in the message is `Valid`, it will be stored in statement table of current parachain validator.
-- If the statement in the message is `Seconded` and it contains a candidate that belongs to our assignment, request the corresponding `PoV` from the backing node via `AvailabilityDistribution`.
-    - backing nodes are the nodes who have issued the statement for a candidate. 
-- after getting `POV`, launch validation and Issue our own Valid or Invalid statement as a result. and store the statement in statement table.
+- If the validity statement in the message is `Valid`, it will be stored in statement table of current parachain validator.
+- If the validity statement in the message is `Seconded` and it contains a candidate that belongs to our assignment, request the corresponding `PoV` from the backing node via `AvailabilityDistribution`.
+    - backing nodes are the nodes who have issued the validity statement for a candidate.
+- after getting `POV`, launch validation and Issue our own validity statement as a result. and store the validity statement in statement table.
 - If there are disagreements regarding the validity of this assessment, they should be addressed through the Disputes Subsystem
 - Meanwhile, agreements are straightforwardly count to the quorum.
 
